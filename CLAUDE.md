@@ -82,3 +82,34 @@ Text is always inserted as plain text, never as HTML.
 `content.ts` folds on load, on pref change, and on mutation (via `scheduleCollapse()`, a `setTimeout(…, 0)` debounce so a burst of mutations folds only once). `collapseThought()` returns `false` for already-collapsed blocks, which is what makes the repeated observer callbacks safe — verified idempotent over three consecutive passes.
 
 Prefs live under their own storage key rather than inside `SettingsV1`: `normalizeSettings()` discards fields outside `{version, rules}`, so folding the setting in would force a schema version bump plus migration and import-file compatibility work. Decoupling also keeps exported rule JSON clean.
+
+### HTML code blocks — verified facts
+
+`lib/code-block-fold.ts` folds long HTML code blocks (361 lines rendered to 8036px, taller than the viewport). Unlike thought blocks, DeepSeek's own copy/download/run buttons already exist — **only html blocks get a run button**, so don't reimplement them; just add the fold toggle. Probed facts:
+
+- The container is `div.md-code-block` — a *semantic* class, so far more reliable than the thought block's hashes.
+- `banner-wrap` is `display:block`; the actual side-by-side row is the **full-width flex one level down** (`space-between`, holding the language label and the native buttons). Appending to `banner-wrap` looks fine in the DOM but renders on a second line and visually collides with DeepSeek's message-action row. `findButtonHost()` walks back up from the first bare-language-name span instead of keying off a hash.
+- `<pre>` has **no `<code>` child** — one `<span>` per line. Read it via `pre.textContent`.
+- Fold by setting `display:none` plus a `data-tse-folded` marker; don't touch `max-height` (DeepSeek uses `overflow:auto` with no height cap, so an inline `display` toggle can't fight its styles).
+- The button lives in React-managed DOM and can be wiped on re-render, so `refreshHtmlCodeBlocks()` re-injects it on every observer tick; a `WeakSet` keeps that idempotent.
+
+### `expandTriggers()` semantics
+
+Deliberate behaviors that the tests pin down — changing any of them changes the contract:
+
+- Word-boundary match via lookbehind/lookahead on `[A-Za-z0-9_-]`, so `hy1` does not fire on `hy123`, `xhy1`, or `hy1_extra`.
+- Case-insensitive matching, but rules keep the user's original casing; `matchedTriggers` reports that original form.
+- Active rules sorted by trigger length descending so longer triggers win.
+- Single pass, non-recursive: triggers appearing inside a `replacement` are never expanded.
+- Function replacer, so `$&` / `$1` inside a replacement stay literal.
+- Regex lookbehind means modern Chrome/Edge only.
+
+## Testing scope
+
+Only `lib/expander.ts` is covered (11 unit tests in `tests/expander.test.ts`). There is no jsdom or browser environment and no test for the DOM layer or the storage layer — new pure functions in `lib/` are the natural place to add coverage.
+
+## Manifest & permissions
+
+`wxt.config.ts` declares the manifest. Permissions are intentionally minimal: `storage` plus host `https://chat.deepseek.com/*` — do not add `<all_urls>` or inject content scripts on other origins. Settings live in `chrome.storage.local` (device-local, not synced), and `normalizeSettings` drops malformed rules and caps at `MAX_RULES`, so imports can never exceed the limit or write bad shape.
+
+Note that `entrypoints/content.ts` imports `defineContentScript` from `#imports`, a WXT-generated virtual module — type resolution for it comes from the generated `.wxt/tsconfig.json`, so run `pnpm prepare` if the editor complains about that import.

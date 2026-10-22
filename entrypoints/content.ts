@@ -1,5 +1,6 @@
 import { defineContentScript } from '#imports';
 import { expandTriggers } from '../lib/expander';
+import { refreshHtmlCodeBlocks, setupHtmlCodeBlocks } from '../lib/code-block-fold';
 import {
   loadPrefs,
   loadSettings,
@@ -80,14 +81,16 @@ export default defineContentScript({
       if (folded) console.debug('[deepseek-trigger-expander] 已折叠思考内容:', folded, '条');
     };
 
-    // 同一个事件循环内的连续 mutation 只折叠一次，避免深度思考流式输出时高频空转
-    let collapseScheduled = false;
-    const scheduleCollapse = () => {
-      if (collapseScheduled || !prefs.collapseThoughts) return;
-      collapseScheduled = true;
+    // 同一个事件循环内的连续 mutation 只处理一次，避免深度思考流式输出时高频空转
+    let domWorkScheduled = false;
+    const scheduleDomWork = () => {
+      if (domWorkScheduled) return;
+      domWorkScheduled = true;
       setTimeout(() => {
-        collapseScheduled = false;
+        domWorkScheduled = false;
         collapseThoughts();
+        // 代码块折叠没有开关，是默认行为，所以始终检查
+        refreshHtmlCodeBlocks();
       }, 0);
     };
 
@@ -154,8 +157,11 @@ export default defineContentScript({
     const observer = new MutationObserver(() => {
       if (cachedInput && !cachedInput.isConnected) cachedInput = null;
       if (cachedSendButton && !cachedSendButton.isConnected) cachedSendButton = null;
-      scheduleCollapse();
+      scheduleDomWork();
     });
     observer.observe(document.body, { childList: true, subtree: true });
+
+    // 首屏就存在的 HTML 代码块
+    setupHtmlCodeBlocks();
   },
 });

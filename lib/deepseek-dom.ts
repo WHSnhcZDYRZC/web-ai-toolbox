@@ -45,6 +45,32 @@ const THINK_CONTENT_SELECTOR = '.ds-think-content';
 /** 已完成思考的标题文案，如「已思考（用时 25 秒）」；思考进行中是「正在思考」 */
 const DONE_THINK_TITLE_RE = /^已思考/;
 
+/*
+ * ── HTML 代码块 ──────────────────────────────────────────────────────────
+ *
+ * 以下结论来自 2026-10 对真实页面的实测：
+ *
+ * 1. 代码块容器是 `div.md-code-block`（深色主题再叠 `md-code-block-dark`），
+ *    属于有语义的 class，比思考块那套 hash class 可靠。
+ * 2. 头部 `div.md-code-block-banner-wrap` 里依次是「语言标签 + 复制/下载/(运行)按钮」。
+ *    语言标签文本在最前，例如 html 块整体文本是 `html复制下载运行`；
+ *    按钮都是 `ds-button`，无 aria-label，只能靠文本识别。
+ * 3. 正文在 `pre` 里，**没有 `<code>` 子元素**，而是每行一个 `<span>`；
+ *    取全文直接用 `pre.textContent`。
+ * 4. 代码块本身完全没有折叠能力：无 aria-expanded、无 max-height 限制，
+ *    361 行的 HTML 实测渲染高度 7964px，直接顶满视口。
+ *
+ * ⚠️ DeepSeek 自带复制/下载/运行（html 块才有「运行」）。本扩展只补它没有的折叠，
+ * 不要重复实现那三个按钮，免得两边打架。
+ */
+
+/** 代码块容器 */
+const CODE_BLOCK_SELECTOR = '.md-code-block';
+/** 代码块头部：语言标签与自带按钮所在 */
+const CODE_BANNER_SELECTOR = '.md-code-block-banner-wrap';
+/** 折叠时打在我们藏起来的 pre 上的标记 */
+const FOLD_MARK_ATTR = 'data-tse-folded';
+
 function isVisible(el: Element): boolean {
   const rect = el.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
@@ -217,5 +243,62 @@ export function collapseThought(area: HTMLElement): boolean {
   const row = area.firstElementChild as HTMLElement | null;
   if (!row) return false;
   row.click();
+  return true;
+}
+
+/**
+ * 读出代码块的语言标签，如 `html` / `python` / `cpp`。
+ * banner 文本形如「html复制下载运行」，语言在最前面。
+ */
+export function getCodeLang(block: HTMLElement): string {
+  const banner = block.querySelector<HTMLElement>(CODE_BANNER_SELECTOR);
+  if (!banner) return '';
+  const m = /^\s*([a-zA-Z0-9+#._-]+)/.exec(banner.textContent || '');
+  return (m?.[1] ?? '').toLowerCase();
+}
+
+/** 正文行数，用于折叠后仍能让用户看出这坨代码有多大 */
+export function getCodeLineCount(block: HTMLElement): number {
+  const pre = block.querySelector('pre');
+  const text = (pre?.textContent || '').trim();
+  return text ? text.split('\n').length : 0;
+}
+
+/** 找到页面里所有 HTML 代码块 */
+export function findHtmlCodeBlocks(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(CODE_BLOCK_SELECTOR)).filter(
+    (block) => getCodeLang(block) === 'html',
+  );
+}
+
+/**
+ * 是否处于本扩展的折叠态。
+ * 只认打过 FOLD_MARK_ATTR 的 pre，避免误判 DeepSeek 自己隐藏的代码块。
+ */
+export function isCodeBlockFolded(block: HTMLElement): boolean {
+  const pre = block.querySelector('pre');
+  return !!pre?.hasAttribute(FOLD_MARK_ATTR);
+}
+
+/**
+ * 折叠代码块（只留标题行）。返回是否发生了折叠。
+ *
+ * 直接藏 pre 而不是改 max-height：DeepSeek 对 pre 用的是 `overflow:auto`
+ * 且不限高，写内联 display 最不容易和它的样式打架。
+ */
+export function foldCodeBlock(block: HTMLElement): boolean {
+  const pre = block.querySelector<HTMLElement>('pre');
+  if (!pre || isCodeBlockFolded(block)) return false;
+  pre.setAttribute(FOLD_MARK_ATTR, '');
+  pre.style.display = 'none';
+  return true;
+}
+
+/** 展开代码块，返回是否发生了展开 */
+export function unfoldCodeBlock(block: HTMLElement): boolean {
+  const pre = block.querySelector<HTMLElement>('pre');
+  if (!pre || !isCodeBlockFolded(block)) return false;
+  pre.removeAttribute(FOLD_MARK_ATTR);
+  pre.style.display = '';
   return true;
 }
