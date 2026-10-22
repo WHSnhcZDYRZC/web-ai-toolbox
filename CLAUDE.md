@@ -40,9 +40,9 @@ Two independent extension surfaces sharing `lib/`:
 
 | File | Role |
 |---|---|
-| `lib/types.ts` | The data contract: `SettingsV1`, `TriggerRule`, `SETTINGS_KEY`, `MAX_RULES` (20), `TRIGGER_PATTERN` (ASCII, letter-initial, ≤32 chars), `createRule()`. |
+| `lib/types.ts` | The data contract: `SettingsV1`, `TriggerRule`, `SETTINGS_KEY`, `MAX_RULES` (20), `TRIGGER_PATTERN` (ASCII, letter-initial, ≤32 chars), `createRule()`, plus `Prefs`/`PREF_KEY`/`DEFAULT_PREFS`. |
 | `lib/expander.ts` | `expandTriggers(text, rules)` — pure string function, the only tested unit. |
-| `lib/storage.ts` | `chrome.storage.local` read/write plus `normalizeSettings()`, the single validation gate for both persisted data and imported JSON files. |
+| `lib/storage.ts` | `chrome.storage.local` read/write plus `normalizeSettings()`, the single validation gate for both persisted data and imported JSON files. Also `loadPrefs`/`savePrefs`/`onPrefsChanged`. |
 | `lib/deepseek-dom.ts` | **All** DeepSeek page selectors and DOM writing. |
 
 ### Send interception (`content.ts`)
@@ -69,23 +69,16 @@ Writing text back must go through `setInputText()`, which keeps two frameworks h
 
 Text is always inserted as plain text, never as HTML.
 
-### `expandTriggers()` semantics
+### Collapsible "thought" blocks — verified facts
 
-Deliberate behaviors that the tests pin down — changing any of them changes the contract:
+`findThoughtAreas()` / `isThoughtExpanded()` / `collapseThought()` in `lib/deepseek-dom.ts` implement the optional 「思考内容默认折叠」 setting. These conclusions came from probing a live `chat.deepseek.com` page in Oct 2026 — they cannot be re-derived from the source, and re-check them if the UI ever changes:
 
-- Word-boundary match via lookbehind/lookahead on `[A-Za-z0-9_-]`, so `hy1` does not fire on `hy123`, `xhy1`, or `hy1_extra`.
-- Case-insensitive matching, but rules keep the user's original casing; `matchedTriggers` reports that original form.
-- Active rules sorted by trigger length descending so longer triggers win.
-- Single pass, non-recursive: triggers appearing inside a `replacement` are never expanded.
-- Function replacer, so `$&` / `$1` inside a replacement stay literal.
-- Regex lookbehind means modern Chrome/Edge only.
+- **Never key off `class`.** DeepSeek's classes are mostly build-time hashes (`_74c0879`, `c2b72bb8`…) that change on every deploy. Only `ds-`-prefixed classes are semantic (`ds-think-content`, `ds-message`, `ds-toggle-button`). The container is anchored on its inline CSS variable `--collapsible-area-title-height`, with a text-based fallback.
+- **There is no `aria-expanded`, and the class is identical in both states.** The one reliable signal is whether `.ds-think-content` is in the DOM: expanded mounts it, collapsed **removes it entirely** (it is not hidden). Measured heights: 89px expanded vs 34px collapsed; content up to 5229px.
+- The title row is always the container's **first child**; clicking it toggles. Clicking the span, the row, or the row's parent all work.
+- `ds-collapsible-text` is the **user's question text**, not a thought-block title — don't mistake it for one.
+- `findThoughtAreas()` matches only titles starting with `已思考`, deliberately skipping `正在思考`: content streams in live during thinking, so collapsing then would fight both the user's attention and the MutationObserver's high-frequency callbacks. Blocks are folded once they settle.
 
-## Testing scope
+`content.ts` folds on load, on pref change, and on mutation (via `scheduleCollapse()`, a `setTimeout(…, 0)` debounce so a burst of mutations folds only once). `collapseThought()` returns `false` for already-collapsed blocks, which is what makes the repeated observer callbacks safe — verified idempotent over three consecutive passes.
 
-Only `lib/expander.ts` is covered (11 unit tests in `tests/expander.test.ts`). There is no jsdom or browser environment and no test for the DOM layer or the storage layer — new pure functions in `lib/` are the natural place to add coverage.
-
-## Manifest & permissions
-
-`wxt.config.ts` declares the manifest. Permissions are intentionally minimal: `storage` plus host `https://chat.deepseek.com/*` — do not add `<all_urls>` or inject content scripts on other origins. Settings live in `chrome.storage.local` (device-local, not synced), and `normalizeSettings` drops malformed rules and caps at `MAX_RULES`, so imports can never exceed the limit or write bad shape.
-
-Note that `entrypoints/content.ts` imports `defineContentScript` from `#imports`, a WXT-generated virtual module — type resolution for it comes from the generated `.wxt/tsconfig.json`, so run `pnpm prepare` if the editor complains about that import.
+Prefs live under their own storage key rather than inside `SettingsV1`: `normalizeSettings()` discards fields outside `{version, rules}`, so folding the setting in would force a schema version bump plus migration and import-file compatibility work. Decoupling also keeps exported rule JSON clean.

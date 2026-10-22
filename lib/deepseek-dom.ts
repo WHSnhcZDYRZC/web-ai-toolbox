@@ -7,6 +7,7 @@
  * 定位策略均为多级 fallback：
  * - 输入框：textarea → contenteditable → 发送按钮所在容器内的可编辑元素
  * - 发送按钮：button[type="submit"] → aria-label/title/文本含“发送/Send” → 输入框附近的图标按钮
+ * - 思考折叠区：CSS 变量锚定 → 标题文本锚定
  */
 
 /** 聊天输入框候选选择器，按优先级排列 */
@@ -17,6 +18,32 @@ const INPUT_SELECTORS = [
 
 /** 发送按钮 aria-label / title / 文本中的关键字（忽略大小写） */
 const SEND_BUTTON_KEYWORDS = ['发送', 'send'];
+
+/*
+ * ── 思考折叠区 ──────────────────────────────────────────────────────────
+ *
+ * 以下结论来自 2026-10 对真实页面的实测，改版后请重新核对：
+ *
+ * 1. DeepSeek 的 class 基本都是构建期 hash（`_74c0879`、`c2b72bb8`…），
+ *    发版即变，**不可依赖**。只有 `ds-` 前缀的是语义化 class，相对稳定
+ *    （ds-think-content、ds-message、ds-toggle-button、ds-collapsible-text 等）。
+ *    折叠区容器改用内联 CSS 变量 `--collapsible-area-title-height` 锚定。
+ * 2. 展开/折叠 **没有** aria-expanded，class 也不变——两者完全一致。
+ *    唯一可靠的差异是思考正文 `.ds-think-content`：
+ *    展开时挂载，折叠时直接从 DOM 卸载（不是隐藏）。
+ * 3. 标题行恒为容器的第一个子元素，点击它即可切换折叠状态。
+ *    实测点击标题文本 span、标题行、标题区均有效。
+ * 4. 注意 `ds-collapsible-text` 是**用户提问**的文本，不是思考块标题，别认错。
+ */
+
+/** 折叠区容器：靠内联 CSS 变量锚定，避开构建期 hash class */
+const COLLAPSIBLE_AREA_SELECTOR = 'div[style*="--collapsible-area-title-height"]';
+
+/** 思考正文节点：挂载即展开 */
+const THINK_CONTENT_SELECTOR = '.ds-think-content';
+
+/** 已完成思考的标题文案，如「已思考（用时 25 秒）」；思考进行中是「正在思考」 */
+const DONE_THINK_TITLE_RE = /^已思考/;
 
 function isVisible(el: Element): boolean {
   const rect = el.getBoundingClientRect();
@@ -129,4 +156,66 @@ export function setInputText(el: HTMLElement, text: string): void {
   // 兜底：直接写 textContent 再 dispatch input
   el.textContent = text;
   el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/**
+ * 找到所有**已完成**的思考折叠区。
+ *
+ * 只认「已思考…」的标题，刻意跳过「正在思考」：思考进行中正文在流式增长，
+ * 此刻去折叠既会打断用户的实时反馈，也会和 MutationObserver 的高频回调打架。
+ * 等它转为「已思考」后再折叠，才是稳定的终态。
+ *
+ * fallback：主路径用 CSS 变量锚定容器；若 DeepSeek 改名该变量，
+ * 退化为按标题文本找到 span，再向上取第一个「自己比标题高不少」的祖先
+ * ——高度差是折叠区与普通 span 容器的可靠区别。
+ */
+export function findThoughtAreas(): HTMLElement[] {
+  const areas: HTMLElement[] = [];
+  const seen = new Set<HTMLElement>();
+
+  for (const el of document.querySelectorAll<HTMLElement>(COLLAPSIBLE_AREA_SELECTOR)) {
+    const row = el.firstElementChild as HTMLElement | null;
+    if (row && DONE_THINK_TITLE_RE.test((row.textContent ?? '').trim())) {
+      areas.push(el);
+      seen.add(el);
+    }
+  }
+  if (areas.length) return areas;
+
+  for (const span of document.querySelectorAll<HTMLElement>('span, div, button')) {
+    if (!DONE_THINK_TITLE_RE.test((span.textContent ?? '').trim())) continue;
+    let cur = span.parentElement;
+    for (let d = 0; d < 8 && cur; d++) {
+      if (seen.has(cur)) break;
+      // 容器至少要比标题本身高出一截，否则不是折叠区而是标题自己
+      if (cur.offsetHeight > span.offsetHeight + 8) {
+        areas.push(cur);
+        seen.add(cur);
+        break;
+      }
+      cur = cur.parentElement;
+    }
+  }
+  return areas;
+}
+
+/**
+ * 思考块是否处于展开态。
+ * 判据只有一个：正文节点是否挂在 DOM 里（折叠时 DeepSeek 直接卸载它）。
+ */
+export function isThoughtExpanded(area: HTMLElement): boolean {
+  return area.querySelector(THINK_CONTENT_SELECTOR) !== null;
+}
+
+/**
+ * 折叠一个思考块，返回是否真的折叠了。
+ * 点击的是容器第一个子元素（标题行），由 DeepSeek 自己的逻辑去做高度动画。
+ * 已经是折叠态时直接返回 false，调用方据此避免重复点击。
+ */
+export function collapseThought(area: HTMLElement): boolean {
+  if (!isThoughtExpanded(area)) return false;
+  const row = area.firstElementChild as HTMLElement | null;
+  if (!row) return false;
+  row.click();
+  return true;
 }

@@ -17,13 +17,16 @@ import {
   DownloadOutlined,
   PlusOutlined,
   SearchOutlined,
+  SettingOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { loadSettings, normalizeSettings, saveSettings } from '../../lib/storage';
+import { loadPrefs, loadSettings, normalizeSettings, savePrefs, saveSettings } from '../../lib/storage';
 import {
+  DEFAULT_PREFS,
   MAX_RULES,
   TRIGGER_PATTERN,
   createRule,
+  type Prefs,
   type TriggerRule,
 } from '../../lib/types';
 
@@ -95,6 +98,8 @@ export default function App() {
   const [editingRule, setEditingRule] = useState<TriggerRule | null>(null);
   const [search, setSearch] = useState('');
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
+  const [prefs, setPrefs] = useState<Prefs>({ ...DEFAULT_PREFS });
+  const [prefsOpen, setPrefsOpen] = useState(false);
   const [form] = Form.useForm<RuleFormValues>();
 
   useEffect(() => {
@@ -102,8 +107,19 @@ export default function App() {
       .then((settings) => setRules(settings.rules))
       .catch(() => message.error('读取配置失败'))
       .finally(() => setLoading(false));
+    loadPrefs()
+      .then(setPrefs)
+      .catch(() => message.error('读取设置失败'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 偏好写入独立的 storage key，content script 通过 onPrefsChanged 热更新 */
+  const handleToggleCollapse = async (checked: boolean) => {
+    const next: Prefs = { ...prefs, collapseThoughts: checked };
+    await savePrefs(next);
+    setPrefs(next);
+    message.success(checked ? '思考内容将默认折叠' : '思考内容恢复默认展开');
+  };
 
   /** 写入 chrome.storage.local；content script 通过 storage.onChanged 热更新 */
   const persist = async (nextRules: TriggerRule[], successText: string) => {
@@ -239,6 +255,15 @@ export default function App() {
         <span className="app-count">
           {query ? `${filteredRules.length} 条匹配` : `${rules.length} / ${MAX_RULES}`}
         </span>
+        <button
+          type="button"
+          className="app-settings-btn"
+          aria-label="设置"
+          title="设置"
+          onClick={() => setPrefsOpen(true)}
+        >
+          <SettingOutlined />
+        </button>
       </header>
 
       <div className="app-search">
@@ -383,6 +408,25 @@ export default function App() {
             <Switch />
           </Form.Item>
         </Form>
+      </Drawer>
+
+      <Drawer
+        title="设置"
+        placement="bottom"
+        open={prefsOpen}
+        onClose={() => setPrefsOpen(false)}
+        height={220}
+        destroyOnHidden
+      >
+        <div className="pref-item">
+          <div className="pref-text">
+            <div className="pref-title">思考内容默认折叠</div>
+            <div className="pref-desc">
+              DeepSeek 深度思考结束后自动折叠思考过程。思考进行中不受影响，展开后再次进入页面会重新折叠。
+            </div>
+          </div>
+          <Switch checked={prefs.collapseThoughts} onChange={handleToggleCollapse} />
+        </div>
       </Drawer>
     </div>
   );

@@ -67,6 +67,27 @@ body {
   flex-shrink: 0;
 }
 
+.app-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.app-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.34);
+}
+
 /* ---------- 搜索框 ---------- */
 .app-search {
   flex-shrink: 0;
@@ -256,4 +277,31 @@ body {
 .ant-drawer .ant-form-item-explain,
 .ant-drawer .ant-form-item-extra {
   font-size: 11px;
+}
+
+/* ---------- 设置项 ---------- */
+.pref-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.pref-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pref-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #1f2329;
+}
+
+.pref-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #646a73;
 }
