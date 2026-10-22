@@ -1,24 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   App as AntdApp,
   Button,
+  Drawer,
   Form,
   Input,
-  Modal,
   Popconfirm,
   Space,
+  Spin,
   Switch,
-  Table,
-  Tag,
-  Tooltip,
   Upload,
 } from 'antd';
 import type { UploadProps } from 'antd';
 import {
   DeleteOutlined,
   DownloadOutlined,
-  EditOutlined,
   PlusOutlined,
+  SearchOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import { loadSettings, normalizeSettings, saveSettings } from '../../lib/storage';
@@ -37,18 +35,74 @@ type RuleFormValues = {
 
 const EXPORT_FILE_NAME = 'deepseek-trigger-rules.json';
 
+type RuleCardProps = {
+  rule: TriggerRule;
+  expanded: boolean;
+  onToggleExpand: (id: string) => void;
+  onEdit: (rule: TriggerRule) => void;
+  onToggleEnabled: (rule: TriggerRule, enabled: boolean) => void;
+};
+
+function RuleCard({ rule, expanded, onToggleExpand, onEdit, onToggleEnabled }: RuleCardProps) {
+  const textRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  // 检测单行截断是否真实发生，只有溢出的卡片才显示“展开更多”
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) setOverflowing(el.scrollHeight > el.clientHeight + 1);
+  }, [rule.replacement, expanded]);
+
+  return (
+    <div
+      className={`rule-card${rule.enabled ? '' : ' is-disabled'}`}
+      onClick={() => onEdit(rule)}
+    >
+      <div className="rule-main">
+        <div className="rule-trigger">{rule.trigger}</div>
+        <div ref={textRef} className={`rule-replacement${expanded ? ' is-expanded' : ''}`}>
+          {rule.replacement}
+        </div>
+        {(overflowing || expanded) && (
+          <button
+            type="button"
+            className="rule-expand-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand(rule.id);
+            }}
+          >
+            {expanded ? '收起' : '展开更多'}
+          </button>
+        )}
+      </div>
+      <div className="rule-side" onClick={(e) => e.stopPropagation()}>
+        <Switch
+          size="small"
+          checked={rule.enabled}
+          onChange={(checked) => onToggleEnabled(rule, checked)}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { message } = AntdApp.useApp();
   const [rules, setRules] = useState<TriggerRule[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<TriggerRule | null>(null);
+  const [search, setSearch] = useState('');
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
   const [form] = Form.useForm<RuleFormValues>();
 
   useEffect(() => {
     loadSettings()
       .then((settings) => setRules(settings.rules))
+      .catch(() => message.error('读取配置失败'))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** 写入 chrome.storage.local；content script 通过 storage.onChanged 热更新 */
@@ -58,21 +112,21 @@ export default function App() {
     message.success(successText);
   };
 
-  const openCreateModal = () => {
+  const openCreateDrawer = () => {
     setEditingRule(null);
     form.resetFields();
     form.setFieldsValue({ trigger: '', replacement: '', enabled: true });
-    setModalOpen(true);
+    setDrawerOpen(true);
   };
 
-  const openEditModal = (rule: TriggerRule) => {
+  const openEditDrawer = (rule: TriggerRule) => {
     setEditingRule(rule);
     form.setFieldsValue({
       trigger: rule.trigger,
       replacement: rule.replacement,
       enabled: rule.enabled,
     });
-    setModalOpen(true);
+    setDrawerOpen(true);
   };
 
   const handleSubmit = async () => {
@@ -92,13 +146,13 @@ export default function App() {
         '规则已新增',
       );
     }
-    setModalOpen(false);
+    setDrawerOpen(false);
   };
 
   const handleToggle = async (rule: TriggerRule, enabled: boolean) => {
     await persist(
       rules.map((r) => (r.id === rule.id ? { ...r, enabled, updatedAt: Date.now() } : r)),
-      enabled ? '规则已启用' : '规则已停用',
+      enabled ? `已启用 ${rule.trigger}` : `已停用 ${rule.trigger}`,
     );
   };
 
@@ -107,6 +161,16 @@ export default function App() {
       rules.filter((r) => r.id !== rule.id),
       '规则已删除',
     );
+    setDrawerOpen(false);
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleExport = () => {
@@ -154,115 +218,132 @@ export default function App() {
 
   const reachedLimit = rules.length >= MAX_RULES;
 
-  const columns = useMemo(
-    () => [
-      {
-        title: '触发词',
-        dataIndex: 'trigger',
-        width: 140,
-        render: (value: string) => <Tag color="blue">{value}</Tag>,
-      },
-      {
-        title: '展开文本',
-        dataIndex: 'replacement',
-        ellipsis: true,
-        render: (value: string) => (
-          <Tooltip title={value.length > 60 ? value : undefined} placement="topLeft">
-            <span className="replacement-cell">{value}</span>
-          </Tooltip>
-        ),
-      },
-      {
-        title: '启用',
-        dataIndex: 'enabled',
-        width: 70,
-        render: (enabled: boolean, rule: TriggerRule) => (
-          <Switch size="small" checked={enabled} onChange={(checked) => handleToggle(rule, checked)} />
-        ),
-      },
-      {
-        title: '操作',
-        key: 'actions',
-        width: 100,
-        render: (_: unknown, rule: TriggerRule) => (
-          <Space size="small">
-            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditModal(rule)} />
-            <Popconfirm
-              title={`删除触发词 ${rule.trigger}？`}
-              okText="删除"
-              cancelText="取消"
-              onConfirm={() => handleDelete(rule)}
-            >
-              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          </Space>
-        ),
-      },
-    ],
-    [rules],
-  );
+  /** 搜索：同时匹配触发词和展开文本，忽略大小写 */
+  const query = search.trim().toLowerCase();
+  const filteredRules = query
+    ? rules.filter(
+        (r) =>
+          r.trigger.toLowerCase().includes(query) ||
+          r.replacement.toLowerCase().includes(query),
+      )
+    : rules;
 
   return (
-    <div className="app-container">
-      <div className="app-header">
+    <div className="app">
+      <header className="app-header">
         <img className="app-logo" src="icons/48.png" alt="" />
-        <div>
-          <div className="app-title">DeepSeek 触发词配置</div>
-          <div className="app-subtitle">发送前自动展开触发词，仅作用于 chat.deepseek.com</div>
+        <div className="app-header-text">
+          <div className="app-title">触发词配置</div>
+          <div className="app-subtitle">DeepSeek 发送前自动展开</div>
         </div>
-        <span className="app-count">{rules.length} / {MAX_RULES}</span>
+        <span className="app-count">
+          {query ? `${filteredRules.length} 条匹配` : `${rules.length} / ${MAX_RULES}`}
+        </span>
+      </header>
+
+      <div className="app-search">
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="搜索触发词或展开文本"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
 
-      <div className="app-body">
-        <div className="app-toolbar">
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlusOutlined />}
-            disabled={reachedLimit}
-            onClick={openCreateModal}
-          >
-            新增规则
-          </Button>
-          <span className="toolbar-spacer" />
+      <main className="app-list">
+        {loading ? (
+          <div className="list-loading"><Spin /></div>
+        ) : rules.length === 0 ? (
+          <div className="list-empty">
+            <img className="list-empty-logo" src="icons/128.png" alt="" />
+            <div className="list-empty-title">还没有触发词规则</div>
+            <div className="list-empty-desc">
+              例如：输入 hy1，发送时自动展开为完整提示词
+            </div>
+          </div>
+        ) : filteredRules.length === 0 ? (
+          <div className="list-empty">
+            <div className="list-empty-title">没有匹配的规则</div>
+            <div className="list-empty-desc">换个关键词试试，支持搜索触发词和展开文本</div>
+          </div>
+        ) : (
+          filteredRules.map((rule) => (
+            <RuleCard
+              key={rule.id}
+              rule={rule}
+              expanded={expandedIds.has(rule.id)}
+              onToggleExpand={toggleExpand}
+              onEdit={openEditDrawer}
+              onToggleEnabled={handleToggle}
+            />
+          ))
+        )}
+      </main>
+
+      <footer className="app-footer">
+        <Button
+          type="primary"
+          block
+          size="large"
+          icon={<PlusOutlined />}
+          disabled={reachedLimit}
+          onClick={openCreateDrawer}
+        >
+          {reachedLimit ? `已达 ${MAX_RULES} 条上限` : '新增规则'}
+        </Button>
+        <div className="app-footer-row">
           <Upload accept=".json,application/json" showUploadList={false} beforeUpload={handleImport}>
-            <Button size="small" icon={<UploadOutlined />}>导入</Button>
+            <Button type="text" size="small" icon={<UploadOutlined />}>导入</Button>
           </Upload>
-          <Button size="small" icon={<DownloadOutlined />} disabled={!rules.length} onClick={handleExport}>
+          <Button
+            type="text"
+            size="small"
+            icon={<DownloadOutlined />}
+            disabled={!rules.length}
+            onClick={handleExport}
+          >
             导出
           </Button>
+          <span className="app-tip">仅保存当前设备 · 保存即生效</span>
         </div>
+      </footer>
 
-        <div className="app-table-card">
-          <Table<TriggerRule>
-            rowKey="id"
-            size="small"
-            loading={loading}
-            columns={columns}
-            dataSource={rules}
-            pagination={false}
-            locale={{ emptyText: '暂无规则，点击“新增规则”开始配置' }}
-          />
-        </div>
-      </div>
-
-      <div className="app-footer-tip">
-        配置仅保存在当前设备，不随账号同步 · 保存后立即生效，无需刷新扩展
-      </div>
-
-      <Modal
+      <Drawer
         title={editingRule ? '编辑规则' : '新增规则'}
-        open={modalOpen}
-        okText="保存"
-        cancelText="取消"
-        onOk={handleSubmit}
-        onCancel={() => setModalOpen(false)}
+        placement="bottom"
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        height={420}
         destroyOnHidden
+        footer={
+          <div className="drawer-footer">
+            {editingRule ? (
+              <Popconfirm
+                title={`删除触发词 ${editingRule.trigger}？`}
+                okText="删除"
+                cancelText="取消"
+                onConfirm={() => handleDelete(editingRule)}
+              >
+                <Button type="text" danger icon={<DeleteOutlined />}>
+                  删除
+                </Button>
+              </Popconfirm>
+            ) : (
+              <span />
+            )}
+            <Space>
+              <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+              <Button type="primary" onClick={handleSubmit}>保存</Button>
+            </Space>
+          </div>
+        }
       >
         <Form form={form} layout="vertical" initialValues={{ enabled: true }}>
           <Form.Item
             name="trigger"
-            label="触发词（仅 ASCII：字母开头，可含字母/数字/下划线/连字符，最长 32 字符）"
+            label="触发词"
+            extra="仅 ASCII：字母开头，可含字母 / 数字 / 下划线 / 连字符，最长 32 字符"
             rules={[
               { required: true, whitespace: true, message: '请输入触发词' },
               {
@@ -284,7 +365,8 @@ export default function App() {
           </Form.Item>
           <Form.Item
             name="replacement"
-            label="展开文本（发送前替换触发词的完整内容）"
+            label="展开文本"
+            extra="发送前会用这段文本替换触发词，支持换行"
             rules={[
               { required: true, message: '请输入展开文本' },
               {
@@ -295,13 +377,13 @@ export default function App() {
               },
             ]}
           >
-            <Input.TextArea rows={5} placeholder="例如：请用中文总结以下内容：" />
+            <Input.TextArea rows={4} placeholder="例如：请用中文总结以下内容：" />
           </Form.Item>
-          <Form.Item name="enabled" label="启用该规则" valuePropName="checked">
+          <Form.Item name="enabled" label="启用该规则" valuePropName="checked" style={{ marginBottom: 0 }}>
             <Switch />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
     </div>
   );
 }
