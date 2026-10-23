@@ -53,7 +53,27 @@ Listeners are attached once on `document` in the **capture** phase, which is wha
 - **Enter key** — expand, then let the event through so the page's own handler sends it. Shift+Enter and IME composition (`isComposing` / `compositionstart`) are excluded.
 - **Send-button click** — capture phase checks whether the click landed inside the send button; if a replacement actually happened, `preventDefault()` + `stopPropagation()`, then re-click the button on the next tick (`setTimeout(..., 0)`) so the page framework has processed the `input` event. The re-click naturally does nothing because `replacedCount` is now 0 — this is why there is no recursion guard.
 
-Element lookups are cached in `cachedInput` / `cachedSendButton`, invalidated by `isConnected` checks plus a `MutationObserver` on `document.body`. Don't move listeners onto the elements themselves.
+Element lookups are cached and invalidated by `isConnected` checks plus a `MutationObserver` on `document.body`. Don't move listeners onto the elements themselves.
+
+#### Which input box gets expanded — focus, not cache
+
+The page normally has **two** editable elements: the bottom composer, plus (when editing an already-sent message) an edit box that DeepSeek inserts. Caching one of them is not enough — the edit box is a *newly inserted* node while the cached one stays `isConnected`, so the cache never invalidates and every read returns the empty composer → `replacedCount` is always 0 → the click is let straight through.
+
+`resolveTargetInput()` resolves it by **focus** instead, in this order:
+
+1. `document.activeElement`, if editable — covers the Enter path.
+2. `focusedInput`, captured on `mousedown` — covers the click path.
+3. `resolveInput()` (the old cache) — fallback for script-driven sends.
+
+Step 2's timing is the whole point: DeepSeek's send button is a `div[tabindex="0"]`, so it **takes focus in the `mousedown` default action**. Event order is `mousedown → focus → mouseup → click`, so by `click` the `activeElement` is already the button. Measured in-page: `mousedown` reports the edit box, `mouseup` and `click` both report the button. Read it in `click` and the strategy silently breaks.
+
+#### Locating the send button
+
+`findSendButton()` first walks **up from the given input box** looking for `.ds-button--primary`. Measured (2026-10): the composer key is `.ds-button--primary…ds-button--circle` at the input's bottom-right; the edit-mode key is `.ds-button--primary…ds-button--capsule` labelled 发送. One selector covers both, and both hit on the **2nd ancestor level** without cross-talk.
+
+This had to become level 0 — the old three levels were all whole-page or parent-container scans, and the composer's parent container contains **no clickable elements at all**, so in normal usage the button was never found and click-sends were never intercepted. Keyboard sends kept working, which masked the bug indefinitely.
+
+`cachedSendButton` is now keyed on the anchor input box (`cachedSendButtonAnchor`), so the cached button is refetched when the scene switches between composer and edit box.
 
 ### Hot reload path
 

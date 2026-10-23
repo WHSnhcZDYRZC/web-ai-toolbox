@@ -111,8 +111,42 @@ function isSendButtonByText(el: HTMLElement): boolean {
   return SEND_BUTTON_KEYWORDS.some((kw) => text.includes(kw));
 }
 
-/** 定位发送按钮；可选传入输入框以启用“附近图标按钮”兜底 */
+/**
+ * 判断是否是可编辑输入元素（textarea / input / contenteditable）。
+ *
+ * content script 靠它区分「用户正在打字的那个框」和别的元素。
+ */
+export function isEditableInput(el: Element | null): el is HTMLElement {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  return (
+    el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLInputElement ||
+    el.isContentEditable
+  );
+}
+
+/** 定位发送按钮；可选传入输入框以启用容器锚定与“附近图标按钮”兜底 */
 export function findSendButton(input?: HTMLElement | null): HTMLElement | null {
+  // 0. 锚定到输入框自身所在的容器。
+  //
+  //    实测（2026-10）：DeepSeek 的发送键是「输入框所在容器里的主色按钮」，
+  //    正常态为 .ds-button--primary…ds-button--circle（右下角圆形），
+  //    编辑态为 .ds-button--primary…ds-button--capsule（文字「发送」）。
+  //    两者都能用同一个 .ds-button--primary 命中，且沿输入框向上第 2 层就命中，
+  //    两个场景各自指向自己的按钮、不会互相串台。
+  //
+  //    这一级必须放在最前面：旧的三级 fallback 全是全页面/父容器扫描，
+  //    而主输入框的父容器里根本没有可点击元素，导致正常态找不到按钮、
+  //    点击发送时压根不拦截触发词。
+  if (input) {
+    let cur: HTMLElement | null = input;
+    for (let d = 0; d < 6 && cur; d++) {
+      const btn = cur.querySelector<HTMLElement>('.ds-button--primary');
+      if (btn && isVisible(btn)) return btn;
+      cur = cur.parentElement;
+    }
+  }
+
   // 1. button[type="submit"]
   const submit = firstVisible('button[type="submit"]');
   if (submit) return submit;
