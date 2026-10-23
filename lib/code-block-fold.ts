@@ -4,8 +4,12 @@
  * DeepSeek 自带复制/下载/运行，本模块只补它没有的「折叠/展开」——
  * 一段几百行的 HTML 会把页面顶出 8000px，不折的话完全没法继续往下看。
  *
+ * 由设置页开关 `foldCodeBlocks` 控制，**默认关闭**：关闭时不往页面注入任何
+ * DOM，DeepSeek 保持原样。开关从开变关时会把按钮摘掉、并展开所有被我们折起来的
+ * 代码块，让页面回到扩展未介入的状态。
+ *
  * 按钮是本扩展自己注入的 DOM，不在 React 虚拟树里。DeepSeek 重渲染时
- * 可能把它一并清掉，所以每次调 refreshHtmlCodeBlocks() 都会检查并补回。
+ * 可能把它一并清掉，所以每次 sync 都会检查并补回。
  */
 
 import {
@@ -20,8 +24,11 @@ const BTN_CLASS = 'tse-fold-btn';
 const STYLE_ID = 'tse-code-fold-style';
 const BANNER_SELECTOR = '.md-code-block-banner-wrap';
 
-/** 已经由本扩展处理过的代码块，避免重复注入和重复折叠 */
-const processed = new WeakSet<HTMLElement>();
+/**
+ * 已经由本扩展处理过的代码块，避免重复注入和重复折叠。
+ * 用 let 而非 const：开关关闭时需要整体重置，重新打开才能再次处理。
+ */
+let processed = new WeakSet<HTMLElement>();
 
 /**
  * 按钮样式。用 currentColor 描边，这样深色/浅色主题下都能自适应，
@@ -135,17 +142,36 @@ function processBlock(block: HTMLElement): void {
   syncLabel(block, btn);
 }
 
-/** 首屏处理：在进页面时把已存在的 HTML 代码块折好 */
-export function setupHtmlCodeBlocks(): void {
+/** 折叠所有已存在的 HTML 代码块，并注入/补回按钮 */
+function foldAll(): void {
   ensureStyles();
   for (const block of findHtmlCodeBlocks()) processBlock(block);
 }
 
 /**
- * 供 MutationObserver 调用：补回被 React 冲掉的按钮，并折叠新出现的代码块。
- * 内部按节点去重，重复调用很便宜。
+ * 开关从开变关时清理现场：展开被我们折起的代码块、摘掉注入的按钮。
+ *
+ * 不做清理的话，用户关了开关却看到页面里还留着「展开（N 行）」按钮、
+ * 代码还折着——扩展关闭后应该让页面完全回到原样。
  */
-export function refreshHtmlCodeBlocks(): void {
-  ensureStyles();
-  for (const block of findHtmlCodeBlocks()) processBlock(block);
+export function teardownHtmlCodeBlocks(): void {
+  for (const block of findHtmlCodeBlocks()) {
+    unfoldCodeBlock(block);
+    block.querySelector(`.${BTN_CLASS}`)?.remove();
+  }
+  document.getElementById(STYLE_ID)?.remove();
+  // 重置标记，否则重新打开开关时旧节点会被误判为「已处理」而不再注入
+  processed = new WeakSet<HTMLElement>();
+}
+
+/**
+ * 按当前偏好同步代码块折叠状态。这是本模块唯一的对外入口，
+ * content script 在首屏、偏好变更、DOM 变化三处都调它。
+ */
+export function applyCodeBlockFold(enabled: boolean): void {
+  if (enabled) {
+    foldAll();
+  } else {
+    teardownHtmlCodeBlocks();
+  }
 }

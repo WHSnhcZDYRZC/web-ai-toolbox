@@ -42,8 +42,9 @@ Two independent extension surfaces sharing `lib/`:
 |---|---|
 | `lib/types.ts` | The data contract: `SettingsV1`, `TriggerRule`, `SETTINGS_KEY`, `MAX_RULES` (20), `TRIGGER_PATTERN` (ASCII, letter-initial, ≤32 chars), `createRule()`, plus `Prefs`/`PREF_KEY`/`DEFAULT_PREFS`. |
 | `lib/expander.ts` | `expandTriggers(text, rules)` — pure string function, the only tested unit. |
-| `lib/storage.ts` | `chrome.storage.local` read/write plus `normalizeSettings()`, the single validation gate for both persisted data and imported JSON files. Also `loadPrefs`/`savePrefs`/`onPrefsChanged`. |
+| `lib/storage.ts` | `chrome.storage.local` read/write plus `normalizeSettings()`, the single validation gate for both persisted data and imported JSON files. Also `loadPrefs`/`savePrefs`/`onPrefsChanged`, which funnel through one private `normalizePrefs()`. |
 | `lib/deepseek-dom.ts` | **All** DeepSeek page selectors and DOM writing. |
+| `lib/code-block-fold.ts` | The injected fold button's UI: style injection, button creation, `applyCodeBlockFold(enabled)` entry point. |
 
 ### Send interception (`content.ts`)
 
@@ -86,6 +87,9 @@ Prefs live under their own storage key rather than inside `SettingsV1`: `normali
 ### HTML code blocks — verified facts
 
 `lib/code-block-fold.ts` folds long HTML code blocks (361 lines rendered to 8036px, taller than the viewport). Unlike thought blocks, DeepSeek's own copy/download/run buttons already exist — **only html blocks get a run button**, so don't reimplement them; just add the fold toggle. Probed facts:
+
+- **Gated behind the `foldCodeBlocks` pref, default off.** When off, `applyCodeBlockFold(false)` must leave the page byte-for-byte alone — no button, no `<style>`, no `display:none`. Toggling off also *unfolds* everything we folded and removes the injected buttons, and resets the `processed` `WeakSet` so re-enabling still works (otherwise the old nodes look "already handled" and nothing reappears). Keep `processed` a `let`, not a `const`.
+- `applyCodeBlockFold(enabled)` is the module's only export; content script calls it on load, on pref change, and from the observer (skipped entirely when the pref is off).
 
 - The container is `div.md-code-block` — a *semantic* class, so far more reliable than the thought block's hashes.
 - `banner-wrap` is `display:block`; the actual side-by-side row is the **full-width flex one level down** (`space-between`, holding the language label and the native buttons). Appending to `banner-wrap` looks fine in the DOM but renders on a second line and visually collides with DeepSeek's message-action row. `findButtonHost()` walks back up from the first bare-language-name span instead of keying off a hash.

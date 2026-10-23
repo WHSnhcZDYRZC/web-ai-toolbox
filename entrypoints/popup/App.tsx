@@ -38,6 +38,12 @@ type RuleFormValues = {
 
 const EXPORT_FILE_NAME = 'deepseek-trigger-rules.json';
 
+/** 开关开启/关闭时的提示语，与设置面板里的说明一一对应 */
+const PREF_LABELS: Record<keyof Prefs, (on: boolean) => string> = {
+  collapseThoughts: (on) => (on ? '思考内容将默认折叠' : '思考内容恢复默认展开'),
+  foldCodeBlocks: (on) => (on ? 'HTML 代码块将默认折叠' : 'HTML 代码块恢复默认展开'),
+};
+
 type RuleCardProps = {
   rule: TriggerRule;
   expanded: boolean;
@@ -113,12 +119,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 偏好写入独立的 storage key，content script 通过 onPrefsChanged 热更新 */
-  const handleToggleCollapse = async (checked: boolean) => {
-    const next: Prefs = { ...prefs, collapseThoughts: checked };
+  /**
+ * 偏好写入独立的 storage key，content script 通过 onPrefsChanged 热更新。
+ * key 是 Prefs 的字段名，新增开关时不用再写一个新函数。
+ */
+  const handleTogglePref = async (key: keyof Prefs, checked: boolean) => {
+    const next: Prefs = { ...prefs, [key]: checked };
     await savePrefs(next);
     setPrefs(next);
-    message.success(checked ? '思考内容将默认折叠' : '思考内容恢复默认展开');
+    message.success(PREF_LABELS[key](checked));
   };
 
   /** 写入 chrome.storage.local；content script 通过 storage.onChanged 热更新 */
@@ -415,7 +424,7 @@ export default function App() {
         placement="bottom"
         open={prefsOpen}
         onClose={() => setPrefsOpen(false)}
-        height={220}
+        height={330}
         destroyOnHidden
       >
         <div className="pref-item">
@@ -425,7 +434,22 @@ export default function App() {
               DeepSeek 深度思考结束后自动折叠思考过程。思考进行中不受影响，展开后再次进入页面会重新折叠。
             </div>
           </div>
-          <Switch checked={prefs.collapseThoughts} onChange={handleToggleCollapse} />
+          <Switch
+            checked={prefs.collapseThoughts}
+            onChange={(c) => handleTogglePref('collapseThoughts', c)}
+          />
+        </div>
+        <div className="pref-item">
+          <div className="pref-text">
+            <div className="pref-title">HTML 代码块默认折叠</div>
+            <div className="pref-desc">
+              在代码块标题行加入「展开（N 行）」按钮，长代码默认折起。关闭后移除按钮并还原。DeepSeek 自带的复制、下载、运行不受影响。
+            </div>
+          </div>
+          <Switch
+            checked={prefs.foldCodeBlocks}
+            onChange={(c) => handleTogglePref('foldCodeBlocks', c)}
+          />
         </div>
       </Drawer>
     </div>

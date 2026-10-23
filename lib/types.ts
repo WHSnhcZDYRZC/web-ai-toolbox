@@ -39,9 +39,14 @@ export type Prefs = {
    * 实测一条思考可渲染到 5000px 以上，回看历史会话时非常占版面。
    */
   collapseThoughts: boolean;
+  /**
+   * HTML 代码块默认折叠，并在代码块头部注入「展开（N 行）」按钮。
+   * 关闭时不注入任何 DOM，DeepSeek 页面保持原样。
+   */
+  foldCodeBlocks: boolean;
 };
 
-export const DEFAULT_PREFS: Prefs = { collapseThoughts: false };
+export const DEFAULT_PREFS: Prefs = { collapseThoughts: false, foldCodeBlocks: false };
 
 export function createRule(partial?: Partial<Omit<TriggerRule, 'id' | 'createdAt' | 'updatedAt'>>): TriggerRule {
   const now = Date.now();

@@ -1,6 +1,6 @@
 import { defineContentScript } from '#imports';
 import { expandTriggers } from '../lib/expander';
-import { refreshHtmlCodeBlocks, setupHtmlCodeBlocks } from '../lib/code-block-fold';
+import { applyCodeBlockFold } from '../lib/code-block-fold';
 import {
   loadPrefs,
   loadSettings,
@@ -89,8 +89,8 @@ export default defineContentScript({
       setTimeout(() => {
         domWorkScheduled = false;
         collapseThoughts();
-        // 代码块折叠没有开关，是默认行为，所以始终检查
-        refreshHtmlCodeBlocks();
+        // 开关关闭时 applyCodeBlockFold 会走清理分支，这里提前跳过省一次遍历
+        if (prefs.foldCodeBlocks) applyCodeBlockFold(true);
       }, 0);
     };
 
@@ -98,11 +98,13 @@ export default defineContentScript({
     loadPrefs().then((loaded) => {
       prefs = loaded;
       collapseThoughts();
+      applyCodeBlockFold(prefs.foldCodeBlocks);
     });
     // 用户在 popup 里开关切换后立即生效
     onPrefsChanged((next) => {
       prefs = next;
       if (prefs.collapseThoughts) collapseThoughts();
+      applyCodeBlockFold(prefs.foldCodeBlocks);
     });
 
     /** 对当前输入框内容执行一次触发词展开，返回实际替换次数 */
@@ -153,15 +155,12 @@ export default defineContentScript({
     );
 
     // SPA 路由变化 / 输入框重建：使缓存失效，下次事件时重查元素引用
-    // 同时顺带处理新生成的思考块（已折叠的会被 collapseThought 跳过）
+    // 同时顺带处理新生成的思考块与代码块（已处理的会被跳过）
     const observer = new MutationObserver(() => {
       if (cachedInput && !cachedInput.isConnected) cachedInput = null;
       if (cachedSendButton && !cachedSendButton.isConnected) cachedSendButton = null;
       scheduleDomWork();
     });
     observer.observe(document.body, { childList: true, subtree: true });
-
-    // 首屏就存在的 HTML 代码块
-    setupHtmlCodeBlocks();
   },
 });
